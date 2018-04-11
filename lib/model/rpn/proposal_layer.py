@@ -76,12 +76,9 @@ class _ProposalLayer(nn.Module):
 
         batch_size = bbox_deltas.size(0)
 
-        feat_height, feat_width = scores.size(2), scores.size(3)
+        feat_length = scores.size(2)
         shift_x = np.arange(0, feat_width) * self._feat_stride
-        shift_y = np.arange(0, feat_height) * self._feat_stride
-        shift_x, shift_y = np.meshgrid(shift_x, shift_y)
-        shifts = torch.from_numpy(np.vstack((shift_x.ravel(), shift_y.ravel(),
-                                  shift_x.ravel(), shift_y.ravel())).transpose())
+        shifts = torch.from_numpy(shift_x)
         shifts = shifts.contiguous().type_as(scores).float()
 
         A = self._num_anchors
@@ -89,17 +86,17 @@ class _ProposalLayer(nn.Module):
 
         self._anchors = self._anchors.type_as(scores)
         # anchors = self._anchors.view(1, A, 4) + shifts.view(1, K, 4).permute(1, 0, 2).contiguous()
-        anchors = self._anchors.view(1, A, 4) + shifts.view(K, 1, 4)
-        anchors = anchors.view(1, K * A, 4).expand(batch_size, K * A, 4)
+        anchors = self._anchors.view(1, A, 2) + shifts.view(K, 1, 2)
+        anchors = anchors.view(1, K * A, 2).expand(batch_size, K * A, 2)
 
         # Transpose and reshape predicted bbox transformations to get them
         # into the same order as the anchors:
 
-        bbox_deltas = bbox_deltas.permute(0, 2, 3, 1).contiguous()
-        bbox_deltas = bbox_deltas.view(batch_size, -1, 4)
+        bbox_deltas = bbox_deltas.permute(0, 1).contiguous()
+        bbox_deltas = bbox_deltas.view(batch_size, -1, 2)
 
         # Same story for the scores:
-        scores = scores.permute(0, 2, 3, 1).contiguous()
+        scores = scores.permute(0, 1).contiguous()
         scores = scores.view(batch_size, -1)
 
         # Convert anchors into proposals via bbox transformations
@@ -170,7 +167,6 @@ class _ProposalLayer(nn.Module):
 
     def _filter_boxes(self, boxes, min_size):
         """Remove all boxes with any side smaller than min_size."""
-        ws = boxes[:, :, 2] - boxes[:, :, 0] + 1
-        hs = boxes[:, :, 3] - boxes[:, :, 1] + 1
-        keep = ((ws >= min_size.view(-1,1).expand_as(ws)) & (hs >= min_size.view(-1,1).expand_as(hs)))
+        ws = boxes[:, :, 1] - boxes[:, :, 0] + 1
+        keep = (ws >= min_size.view(-1,1).expand_as(ws))
         return keep
