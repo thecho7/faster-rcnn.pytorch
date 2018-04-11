@@ -33,13 +33,13 @@ class _AnchorTargetLayer(nn.Module):
         Assign anchors to ground-truth targets. Produces anchor classification
         labels and bounding-box regression targets.
     """
-    def __init__(self, feat_stride, scales, ratios):
+    def __init__(self, feat_stride, scales):
         super(_AnchorTargetLayer, self).__init__()
 
         self._feat_stride = feat_stride
         self._scales = scales
         anchor_scales = scales
-        self._anchors = torch.from_numpy(generate_anchors(scales=np.array(anchor_scales), ratios=np.array(ratios))).float()
+        self._anchors = torch.from_numpy(generate_anchors(scales=np.array(anchor_scales))).float()
         self._num_anchors = self._anchors.size(0)
 
         # allow boxes to sit over the edge by a small amount
@@ -58,32 +58,27 @@ class _AnchorTargetLayer(nn.Module):
         im_info = input[2]
         num_boxes = input[3]
 
-        # map of shape (..., H, W)
-        height, width = rpn_cls_score.size(2), rpn_cls_score.size(3)
+        # map of shape (..., L)
+        length = rpn_cls_score.size(2)
 
         batch_size = gt_boxes.size(0)
 
-        feat_height, feat_width = rpn_cls_score.size(2), rpn_cls_score.size(3)
-        shift_x = np.arange(0, feat_width) * self._feat_stride
-        shift_y = np.arange(0, feat_height) * self._feat_stride
-        shift_x, shift_y = np.meshgrid(shift_x, shift_y)
-        shifts = torch.from_numpy(np.vstack((shift_x.ravel(), shift_y.ravel(),
-                                  shift_x.ravel(), shift_y.ravel())).transpose())
+        feat_length = rpn_cls_score.size(2)
+        shift_x = np.arange(0, feat_length) * self._feat_stride
+        shifts = torch.from_numpy(shift_x)
         shifts = shifts.contiguous().type_as(rpn_cls_score).float()
 
         A = self._num_anchors
         K = shifts.size(0)
 
         self._anchors = self._anchors.type_as(gt_boxes) # move to specific gpu.
-        all_anchors = self._anchors.view(1, A, 4) + shifts.view(K, 1, 4)
-        all_anchors = all_anchors.view(K * A, 4)
+        all_anchors = self._anchors.view(1, A, 2) + shifts.view(K, 1, 2)
+        all_anchors = all_anchors.view(K * A, 2)
 
         total_anchors = int(K * A)
 
         keep = ((all_anchors[:, 0] >= -self._allowed_border) &
-                (all_anchors[:, 1] >= -self._allowed_border) &
-                (all_anchors[:, 2] < long(im_info[0][1]) + self._allowed_border) &
-                (all_anchors[:, 3] < long(im_info[0][0]) + self._allowed_border))
+                (all_anchors[:, 1] < long(im_info[0]) + self._allowed_border))
 
         inds_inside = torch.nonzero(keep).view(-1)
 
@@ -169,24 +164,24 @@ class _AnchorTargetLayer(nn.Module):
 
         outputs = []
 
-        labels = labels.view(batch_size, height, width, A).permute(0,3,1,2).contiguous()
-        labels = labels.view(batch_size, 1, A * height, width)
+        labels = labels.view(batch_size, length, A).permute(0,2,1).contiguous()
+        labels = labels.view(batch_size, 1, A * length)
         outputs.append(labels)
 
-        bbox_targets = bbox_targets.view(batch_size, height, width, A*4).permute(0,3,1,2).contiguous()
+        bbox_targets = bbox_targets.view(batch_size, length, A*2).permute(0,2,1).contiguous()
         outputs.append(bbox_targets)
 
         anchors_count = bbox_inside_weights.size(1)
-        bbox_inside_weights = bbox_inside_weights.view(batch_size,anchors_count,1).expand(batch_size, anchors_count, 4)
+        bbox_inside_weights = bbox_inside_weights.view(batch_size,anchors_count,1).expand(batch_size, anchors_count, 2)
 
-        bbox_inside_weights = bbox_inside_weights.contiguous().view(batch_size, height, width, 4*A)\
-                            .permute(0,3,1,2).contiguous()
+        bbox_inside_weights = bbox_inside_weights.contiguous().view(batch_size, length, 2*A)\
+                            .permute(0,2,1).contiguous()
 
         outputs.append(bbox_inside_weights)
 
-        bbox_outside_weights = bbox_outside_weights.view(batch_size,anchors_count,1).expand(batch_size, anchors_count, 4)
-        bbox_outside_weights = bbox_outside_weights.contiguous().view(batch_size, height, width, 4*A)\
-                            .permute(0,3,1,2).contiguous()
+        bbox_outside_weights = bbox_outside_weights.view(batch_size,anchors_count,1).expand(batch_size, anchors_count, 2)
+        bbox_outside_weights = bbox_outside_weights.contiguous().view(batch_size, length, 2*A)\
+                            .permute(0,2,1).contiguous()
         outputs.append(bbox_outside_weights)
 
         return outputs
@@ -215,4 +210,4 @@ def _unmap(data, count, inds, batch_size, fill=0):
 def _compute_targets_batch(ex_rois, gt_rois):
     """Compute bounding-box regression targets for an image."""
 
-    return bbox_transform_batch(ex_rois, gt_rois[:, :, :4])
+    return bbox_transform_batch(ex_rois, gt_rois[:, :, :2])
